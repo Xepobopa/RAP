@@ -1,11 +1,11 @@
 import queue
-from collections import deque
 
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
 
 from core.base import BaseSource
+from core.telemetry import Queue, Deque, MonitorBuffers
 
 
 class DeviceSource(BaseSource):
@@ -19,20 +19,25 @@ class DeviceSource(BaseSource):
     channels: int | None
     chunk_size: int
     samplerate: int
-    _queue: queue.Queue
+    _queue: Queue
     _stream: sd.InputStream | None
 
-    def __init__(self, chunk_size: int = 1024, samplerate: int = 44100):
+    # """Change latency to """
+    def __init__(self, latency: str = 'low', chunk_size: int = 1024, samplerate: int = 44100, monitor: MonitorBuffers = None):
         self.channels = 1
         self.device_id = None # default in system
-        self._queue = queue.Queue()
+        self._queue = Queue(30, "DeviceSourceBuff")
         self._stream = None
+        self.latency = latency
         super().__init__(samplerate, chunk_size)
+
+        if monitor is not None:
+            monitor.add_buffer(self._queue)
 
     def _callback(self, indata: np.ndarray, frames, time, status):
         if status:
             print(f"Error: {status}")
-        self._queue.put(indata.copy())
+        self._queue.put_nowait(indata.copy())
 
     def open(self):
         if self._stream is None:  # Создаем только если еще не создан
@@ -42,7 +47,7 @@ class DeviceSource(BaseSource):
                 samplerate=self.samplerate,
                 blocksize=self.chunk_size,
                 callback=self._callback,
-                latency='low' # test
+                latency=self.latency
             )
             self._stream.start()
 
@@ -58,7 +63,7 @@ class DeviceSource(BaseSource):
 
 
 class FileSource(BaseSource):
-    """Only WAV files are supported"""
+    """Only WAV files are supported. Does not need Monitor, because it words due to generators"""
     def __init__(self, filepath: str, chunk_size: int = 1024):
         # maybe move 'samplerate' to the 'BaseSource'?
         self.filepath = filepath
@@ -98,30 +103,27 @@ class FileSource(BaseSource):
 
 
 class QueueSource(BaseSource):
-    """Strict Source. Use it, when the consumer needs all the data and its loss is unacceptable. For example: AudioSink. Cons: Latency, but sometimes not"""
-    def __init__(self, q: queue.Queue[np.ndarray], samplerate: int, chunk_size: int):
+    """Strict Source. Use it, when the consumer needs all the data and its loss / changes are unacceptable. For example: AudioSink. Cons: Latency, but sometimes not"""
+    def __init__(self, q: Queue[np.ndarray], samplerate: int, chunk_size: int):
         super().__init__(samplerate, chunk_size)
         self.q = q
-        self._prev_chunk = np.zeros(chunk_size, dtype=np.float32)
+        self._empty_chunk = np.zeros(chunk_size, dtype=np.float32)
+
 
     def open(self): pass
     def close(self): pass
 
     # get the latest
     def read_chunk(self):
-        while not self.q.empty():
-            try:
-                chunk = self.q.get_nowait()
-                self._prev_chunk = chunk
-                return chunk
-            except queue.Empty:
-                return self._prev_chunk
+        if self.q.empty():
+            return self._empty_chunk
 
-        return self._prev_chunk
+        return self.q.get_nowait()
 
+# without monitor ??
 class DequeSource(BaseSource):
-    """Lossy Source. Use it, when the consumer needs the newest data and some loss is acceptable. For example: PlotSink"""
-    def __init__(self, q: deque[np.ndarray], samplerate: int, chunk_size: int):
+    """Lossy Source. Use it, when the consumer needs the newest data and some loss / changes are acceptable. For example: PlotSink"""
+    def __init__(self, q: Deque[np.ndarray], samplerate: int, chunk_size: int):
         super().__init__(samplerate, chunk_size)
         self.q = q
         self._empty_chunk = np.zeros(chunk_size, dtype=np.float32)
@@ -130,8 +132,8 @@ class DequeSource(BaseSource):
     def close(self): pass
 
     def read_chunk(self):
-        if self.q:
+        try:
             # read the value, but do not delete it. This prevents from returning empty chunks, that will ruin the plot
-            return self.q[0]
-        else:
+            return self.q.get_latest()
+        except queue.Empty:
             return self._empty_chunk

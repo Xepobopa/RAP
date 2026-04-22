@@ -5,7 +5,7 @@ from core.sources import DeviceSource
 src = DeviceSource()
 
 splt = Splitter(src)
-analyzed = FFTProcessor(splt.branch())
+analyzed = FFTProcessor(splt.branch_lossy())
 
 plot = PlotSink([
     (splt, splt.chunk_size),

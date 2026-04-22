@@ -6,6 +6,7 @@ import numpy as np
 
 from core.base import BaseProcessor, BaseSource
 from core.sources import QueueSource, DequeSource
+from core.telemetry import Queue, Deque, MonitorBuffers
 
 
 class FFTProcessor(BaseProcessor):
@@ -42,27 +43,39 @@ class PitchProcessor(BaseProcessor):
 
 
 class Splitter(BaseProcessor):
-    def __init__(self, source: BaseSource):
+    def __init__(self, source: BaseSource, monitor: MonitorBuffers = None):
         super().__init__(source)
-        self._queues: list[deque[np.ndarray]] = []
+        # Strict consumers must have separate queue
+        self._queues: list[Queue[np.ndarray]] = []
+        self._deque: Deque[np.ndarray] = Deque(1, "")
+        self._monitor = monitor
 
-    def branch_strict(self, maxsize = 10) -> QueueSource:
-        q = queue.Queue(maxsize=maxsize)
+    def branch_strict(self, maxsize = 20, queue_name: str = None) -> QueueSource:
+        q = Queue(maxsize, queue_name)
         self._queues.append(q)
+
+        if self._monitor is not None:
+            self._monitor.add_buffer(q)
+
         return QueueSource(q, self.source.samplerate, self.source.chunk_size)
 
-    # def branch_lazy(self) -> DequeSource:
-    #     # q = queue.Queue(maxsize=1)
-    #     # Use Deque
-    #     q = deque(maxlen=1)
-    #     self._queues.append(q)
-    #     return DequeSource(q, self.source.samplerate, self.source.chunk_size)
+    def branch_lossy(self, queue_name: str = None) -> DequeSource:
+        if self._deque.name == "":
+            self._deque.name = queue_name
+            if self._monitor is not None:
+                self._monitor.add_buffer(self._deque)
+
+        return DequeSource(self._deque, self.source.samplerate, self.source.chunk_size)
 
     def process(self, chunk: np.ndarray) -> np.ndarray:
         try:
+            # update strict queues
             for q in self._queues:
-                q.append(chunk.copy())
+                q.put_nowait(chunk.copy())
         except queue.Full:
             pass
+
+        # update lazy queue
+        self._deque.append(chunk.copy())
 
         return chunk

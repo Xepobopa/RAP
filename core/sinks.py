@@ -9,43 +9,6 @@ from matplotlib.animation import FuncAnimation
 from core.base import BaseSource, BaseSink
 
 
-# class PlotSink(BaseSink):
-#     def __init__(self, source: BaseSource, chunk_size: int = 0):
-#         super().__init__(source)
-#         if chunk_size != 0:
-#             self.source.chunk_size = chunk_size
-#         self.ani = None
-#         self.source = source
-#
-#         self.fig, self.ax = plt.subplots()
-#         self.fig.set_size_inches((8, 6))
-#         self.plotdata = np.zeros(self.source.chunk_size)
-#         [self.line] = self.ax.plot(self.plotdata, color='green')
-#         self.ax.set_ylim((0.5, -0.5))
-#         self.ax.set_xlim((0, self.source.chunk_size))
-#
-#     def write(self, chunk: np.ndarray):
-#         self.line.set_ydata(chunk)
-#         return [self.line]
-#
-#     def _update(self, frame):
-#         """Internal helper for Matplotlib."""
-#         try:
-#             chunk = next(self.source)
-#             return self.write(chunk)
-#         except Exception as e:
-#             print(f"Plot error: {e}")
-#             return [self.line]
-#
-#     def show(self):
-#         """The specific 'run' method for Matplotlib."""
-#         with self.source:
-#             self.ani = FuncAnimation(
-#                 self.fig, self._update, interval=18,
-#                 blit=True, cache_frame_data=False
-#             )
-#             plt.show()
-
 class PlotSink(BaseSink):
     """
     Params:
@@ -96,7 +59,7 @@ class PlotSink(BaseSink):
         # Важно: открываем ВСЕ источники через контекстные менеджеры
         # Для простоты можно использовать ExitStack, но для школы пока хватит обычного запуска
         self.ani = FuncAnimation(
-            self.fig, self._update, interval=13,
+            self.fig, self._update, interval=40,
             blit=False, cache_frame_data=False
         )
         plt.show()
@@ -105,7 +68,6 @@ class AudioSink(BaseSink):
     def __init__(self, source: BaseSource):
         super().__init__(source)
         self.source = source
-        self._queue = queue.Queue()
         self._stream = sd.OutputStream(
             samplerate=self.source.samplerate, channels=1, blocksize=self.source.chunk_size,
             callback=self._callback,
@@ -114,7 +76,7 @@ class AudioSink(BaseSink):
 
     def write(self, chunk: np.ndarray):
         """Action to perform on the data (plot, save, etc.)"""
-        self._queue.put(chunk)
+        # self._queue.put(chunk)
         pass
 
     def __enter__(self):

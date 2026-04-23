@@ -37,7 +37,10 @@ class DeviceSource(BaseSource):
     def _callback(self, indata: np.ndarray, frames, time, status):
         if status:
             print(f"Error: {status}")
-        self._queue.put_nowait(indata.copy())
+        try:
+            self._queue.put_nowait(indata.copy())
+        except queue.Full:
+            pass
 
     def open(self):
         if self._stream is None:  # Создаем только если еще не создан

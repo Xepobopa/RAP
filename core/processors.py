@@ -1,10 +1,13 @@
 # processors.py
+import math
 import queue
 from collections import deque
+from encodings import hz
+from typing import Callable
 
 import numpy as np
 
-from core.base import BaseProcessor, BaseSource
+from core.base import BaseProcessor, BaseSource, Notes
 from core.sources import QueueSource, DequeSource
 from core.telemetry import Queue, Deque, MonitorBuffers
 
@@ -79,3 +82,49 @@ class Splitter(BaseProcessor):
         self._deque.append(chunk.copy())
 
         return chunk
+
+
+NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+class NoteDetector(BaseProcessor):
+    """'cb' is a callback that calls when Note is detected. Accepts (str (note name), int (octave number))"""
+
+    def __init__(self, source: BaseSource, cb: Callable[[str, int], None]):
+        super().__init__(source)
+        self.cb = cb
+
+    def hz_to_note(self, hz: float) -> str:
+        # the note is counted starting from A4 (440 hz)
+        steps_from_a4 = int(round(12 * math.log2(hz / Notes.A4.value))) # formula
+        note_idx = (steps_from_a4 + 9) % 12 # 9 - index of 'A' in NOTES_NAMES
+        octave = 4 + (steps_from_a4 + 9) // 12
+
+        self.cb(NOTE_NAMES[note_idx], octave)
+
+    def to_hz(self, peak_idx) -> float:
+        # the width of one element after fft
+        # print(f"Chunk: {self.source.chunk_size}")
+        resolution = self.source.samplerate / self.source.chunk_size
+        # peak_idx - is the 'number' of the highest element in current chunk
+        return peak_idx * resolution
+
+    def process(self, chunk: np.ndarray) -> np.ndarray:
+        # find peak
+        peak_idx = int(chunk.argmax())
+        peak_volume = float(chunk[peak_idx])
+
+        # ignore noises
+        if peak_volume < 0.03:
+            # print("Weak signal")
+            return chunk
+
+        hz = self.to_hz(peak_idx)
+
+        # filter non-hearable sounds (20hz-20khz)
+        if hz < 20 or hz > 20_000:
+            return chunk
+
+        self.hz_to_note(hz)
+
+        return chunk
+
+

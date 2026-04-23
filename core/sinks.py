@@ -1,5 +1,7 @@
 # sink - output
 import queue
+import threading
+import time
 
 import numpy as np
 import sounddevice as sd
@@ -59,7 +61,7 @@ class PlotSink(BaseSink):
         # Важно: открываем ВСЕ источники через контекстные менеджеры
         # Для простоты можно использовать ExitStack, но для школы пока хватит обычного запуска
         self.ani = FuncAnimation(
-            self.fig, self._update, interval=40,
+            self.fig, self._update, interval=16,
             blit=False, cache_frame_data=False
         )
         plt.show()
@@ -71,7 +73,7 @@ class AudioSink(BaseSink):
         self._stream = sd.OutputStream(
             samplerate=self.source.samplerate, channels=1, blocksize=self.source.chunk_size,
             callback=self._callback,
-            latency='low' # test. Work well on good pc
+            latency='low' # tests. Work well on good pc
         )
 
     def write(self, chunk: np.ndarray):
@@ -124,3 +126,33 @@ class AudioSink(BaseSink):
                 # а всю работу в фоне делает _callback
                 while self._stream.active:
                     sd.sleep(100)
+
+
+class PumpSink(BaseSink):
+    """Artificial sink, it is doing nothing but consume chunks with the same frequency as they produced.
+    Use it, when you don't have fast enough consumer (You have only PlotSink, for example)"""
+
+    def __init__(self, source: BaseSource):
+        super().__init__(source)
+        self.source = source
+        self._running = False
+
+    def write(self, chunk: np.ndarray):
+        pass
+
+    def __enter__(self):
+        self._running = True
+        threading.Thread(target=self._pump, daemon=True).start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._running = False
+
+    def _pump(self):
+        print("Start pumping!!!")
+        while self._running:
+            time.sleep(0.02) # consuming will be +-45-50 chunks / sec. HARDCODED!
+            try:
+                next(self.source)
+            except StopIteration:
+                pass
